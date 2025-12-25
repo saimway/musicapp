@@ -1,0 +1,35 @@
+name: island_vibes
+description: A fancy flutter music player with Dynamic Island.
+publish_to: 'none'
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+
+  # State Management
+  get: ^4.6.6
+
+  # Audio
+  just_audio: ^0.9.36
+  audio_service: ^0.18.12
+  on_audio_query: ^2.9.0
+
+  # Permissions & System
+  permission_handler: ^11.3.0
+  flutter_overlay_window: ^0.5.0
+
+  # UI & Animations
+  animate_do: ^3.3.4
+  cupertino_icons: ^1.0.2
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^2.0.0
+
+flutter:
+  uses-material-design: true
