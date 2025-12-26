@@ -11,6 +11,9 @@ class MusicController extends GetxController {
   final OnAudioQuery _audioQuery = OnAudioQuery();
   MyAudioHandler? _audioHandler;
 
+  // Fallback player if AudioService fails
+  final AudioPlayer _fallbackPlayer = AudioPlayer();
+
   var songs = <SongModel>[].obs;
   var filteredSongs = <SongModel>[].obs;
 
@@ -23,48 +26,79 @@ class MusicController extends GetxController {
 
   var filterType = "All Songs".obs;
   var isServiceReady = false.obs;
+  var useFallback = false.obs;
 
   @override
   void onInit() {
     super.onInit();
     _initAudioService();
     checkPermissions();
+
+    // Fallback listeners
+    _fallbackPlayer.playerStateStream.listen((state) {
+      if (useFallback.value) {
+        isPlaying.value = state.playing;
+        updateOverlay();
+      }
+    });
+    _fallbackPlayer.positionStream.listen((p) {
+      if (useFallback.value) position.value = p;
+    });
+    _fallbackPlayer.durationStream.listen((d) {
+      if (useFallback.value && d != null) duration.value = d;
+    });
+    _fallbackPlayer.processingStateStream.listen((state) {
+      if (useFallback.value && state == ProcessingState.completed) {
+        playNext();
+      }
+    });
   }
 
   Future<void> _initAudioService() async {
-    try {
-      log("Initializing Audio Service...");
-      _audioHandler = await AudioService.init(
-        builder: () => MyAudioHandler(),
-        config: const AudioServiceConfig(
-          androidNotificationChannelId: 'com.example.island_vibes.channel.audio',
-          androidNotificationChannelName: 'Island Vibes Music',
-          androidNotificationOngoing: true,
-        ),
-      );
-      isServiceReady.value = true;
-      log("Audio Service Initialized.");
+    log("Initializing Audio Service...");
+    int retries = 0;
+    while (retries < 3) {
+      try {
+        _audioHandler = await AudioService.init(
+          builder: () => MyAudioHandler(),
+          config: const AudioServiceConfig(
+            androidNotificationChannelId: 'com.example.island_vibes.channel.audio',
+            androidNotificationChannelName: 'Island Vibes Music',
+            androidNotificationOngoing: true,
+          ),
+        );
+        isServiceReady.value = true;
+        log("Audio Service Initialized.");
 
-      _audioHandler!.playbackState.listen((state) {
-        isPlaying.value = state.playing;
-        updateOverlay();
-      });
-
-      _audioHandler!.mediaItem.listen((item) {
-        if (item != null) {
-          currentSongTitle.value = item.title;
-          currentArtist.value = item.artist ?? "Unknown";
+        _audioHandler!.playbackState.listen((state) {
+          isPlaying.value = state.playing;
           updateOverlay();
-        }
-      });
+        });
 
-      AudioService.position.listen((p) {
-        position.value = p;
-      });
-    } catch (e) {
-      log("Failed to init audio service: $e");
-      Get.snackbar("Error", "Failed to init audio: $e");
+        _audioHandler!.mediaItem.listen((item) {
+          if (item != null) {
+            currentSongTitle.value = item.title;
+            currentArtist.value = item.artist ?? "Unknown";
+            updateOverlay();
+          }
+        });
+
+        AudioService.position.listen((p) {
+          position.value = p;
+        });
+        return; // Success
+      } catch (e) {
+        log("Failed to init audio service (Attempt ${retries + 1}): $e");
+        retries++;
+        await Future.delayed(const Duration(seconds: 1));
+      }
     }
+
+    // If we reach here, AudioService failed 3 times. Use fallback.
+    log("AudioService failed. Switching to Fallback Player.");
+    Get.snackbar("Warning", "Background play disabled (AudioService failed). Using fallback.");
+    useFallback.value = true;
+    isServiceReady.value = true; // Technically ready, just fallback
   }
 
   Future<void> checkPermissions() async {
@@ -72,16 +106,12 @@ class MusicController extends GetxController {
     var storageStatus = await Permission.storage.request();
     var audioStatus = await Permission.audio.request();
 
-    // Explicitly check MANAGE_EXTERNAL_STORAGE for Android 11+ if needed,
-    // but usually audio/storage is enough for media.
-
     if (storageStatus.isGranted || audioStatus.isGranted) {
       log("Storage permission granted.");
       fetchSongs();
     } else {
       log("Storage permission denied.");
       Get.snackbar("Permission", "Storage permission required to play music.");
-      // Fallback: Try to fetch anyway in case permission logic is quirky on some devices
       fetchSongs();
     }
 
@@ -124,31 +154,36 @@ class MusicController extends GetxController {
   }
 
   Future<void> playSong(int index) async {
-    // VISUAL FEEDBACK
-    Get.snackbar("Debug", "Trying to play song $index...", duration: const Duration(seconds: 1));
+    Get.snackbar("Debug", "Trying to play song $index...", duration: const Duration(milliseconds: 500));
 
-    if (_audioHandler == null) {
-      Get.snackbar("Error", "Audio Service is not ready yet. Please wait.");
+    if (!isServiceReady.value) {
+      Get.snackbar("Error", "Player is initializing... please wait.");
       return;
     }
 
     try {
       currentSongIndex.value = index;
       var song = filteredSongs[index];
+      currentSongTitle.value = song.title;
+      currentArtist.value = song.artist ?? "Unknown";
 
-      // Debug URI
-      print("Playing URI: ${song.uri}");
+      if (useFallback.value) {
+        // Fallback Logic
+        await _fallbackPlayer.setAudioSource(AudioSource.uri(Uri.parse(song.uri!)));
+        await _fallbackPlayer.play();
+      } else {
+        // AudioService Logic
+        List<MediaItem> mediaItems = filteredSongs.map((s) => MediaItem(
+          id: s.uri!,
+          album: s.album,
+          title: s.title,
+          artist: s.artist,
+          duration: Duration(milliseconds: s.duration ?? 0),
+        )).toList();
 
-      List<MediaItem> mediaItems = filteredSongs.map((s) => MediaItem(
-        id: s.uri!,
-        album: s.album,
-        title: s.title,
-        artist: s.artist,
-        duration: Duration(milliseconds: s.duration ?? 0),
-      )).toList();
-
-      await _audioHandler!.setPlaylist(mediaItems, index);
-      await _audioHandler!.play();
+        await _audioHandler!.setPlaylist(mediaItems, index);
+        await _audioHandler!.play();
+      }
 
       showOverlay();
     } catch (e) {
@@ -158,23 +193,52 @@ class MusicController extends GetxController {
   }
 
   Future<void> togglePlay() async {
-    if (_audioHandler == null) return;
     try {
-      if (isPlaying.value) {
-        await _audioHandler!.pause();
+      if (useFallback.value) {
+        if (isPlaying.value) {
+          await _fallbackPlayer.pause();
+        } else {
+          await _fallbackPlayer.play();
+        }
       } else {
-        await _audioHandler!.play();
+        if (_audioHandler == null) return;
+        if (isPlaying.value) {
+          await _audioHandler!.pause();
+        } else {
+          await _audioHandler!.play();
+        }
       }
     } catch (e) {
       Get.snackbar("Error", "Playback error: $e");
     }
   }
 
-  Future<void> playNext() async => _audioHandler?.skipToNext();
-  Future<void> playPrevious() async => _audioHandler?.skipToPrevious();
+  Future<void> playNext() async {
+    if (currentSongIndex.value < filteredSongs.length - 1) {
+      if (useFallback.value) {
+        playSong(currentSongIndex.value + 1);
+      } else {
+        _audioHandler?.skipToNext();
+      }
+    }
+  }
+
+  Future<void> playPrevious() async {
+    if (currentSongIndex.value > 0) {
+      if (useFallback.value) {
+        playSong(currentSongIndex.value - 1);
+      } else {
+        _audioHandler?.skipToPrevious();
+      }
+    }
+  }
 
   void seek(Duration pos) {
-    _audioHandler?.seek(pos);
+    if (useFallback.value) {
+      _fallbackPlayer.seek(pos);
+    } else {
+      _audioHandler?.seek(pos);
+    }
   }
 
   // --- Overlay Logic ---
@@ -196,7 +260,6 @@ class MusicController extends GetxController {
       updateOverlay();
     } catch (e) {
       print("Overlay error: $e");
-      // Don't snackbar here, it might be annoying
     }
   }
 
