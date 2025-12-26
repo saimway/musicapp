@@ -133,7 +133,7 @@ class _DynamicIslandWidgetState extends State<DynamicIslandWidget> {
   Widget _buildBar(double height) {
     return FadeInUp(
       duration: const Duration(milliseconds: 500),
-      infinite: true,
+      // infinite: true, // Removed as it is not supported in this version
       child: Container(
         width: 3,
         height: height,

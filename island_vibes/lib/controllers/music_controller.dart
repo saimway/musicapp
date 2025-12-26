@@ -164,7 +164,7 @@ class MusicController extends GetxController {
       overlayContent: 'Island Vibes Playing',
       flag: OverlayFlag.defaultFlag, // defaultFlag usually makes it non-focusable but visible
       visibility: NotificationVisibility.visibilitySecret,
-      positionGravity: PositionGravity.top,
+      // positionGravity: PositionGravity.top, // Removed as it causes build error
       height: 140,
       width: -1, // -1 is commonly MATCH_PARENT in JNI/Android channels
       startPosition: const OverlayPosition(0, 0),
