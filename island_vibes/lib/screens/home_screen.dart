@@ -104,6 +104,7 @@ class HomeScreen extends StatelessWidget {
                         style: TextStyle(color: Colors.grey[400]),
                       ),
                       onTap: () {
+                        print("Tapped song at index: $index");
                         controller.playSong(index);
                         Get.to(() => const PlayerScreen(), transition: Transition.downToUp);
                       },

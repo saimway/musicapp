@@ -8,21 +8,17 @@ void main() {
   runApp(const MyApp());
 }
 
-// NOTE: The overlay entry point is defined in main_overlay.dart
-// allowing it to run in a separate isolate if needed, though
-// flutter_overlay_window often uses a specific entry point.
-
 class MyApp extends StatelessWidget {
   const MyApp({super.key});
 
   @override
   Widget build(BuildContext context) {
-    // Initialize the controller permanently
-    Get.put(MusicController());
-
     return GetMaterialApp(
       title: 'Island Vibes',
       debugShowCheckedModeBanner: false,
+      initialBinding: BindingsBuilder(() {
+        Get.put(MusicController(), permanent: true);
+      }),
       theme: ThemeData(
         brightness: Brightness.dark,
         scaffoldBackgroundColor: const Color(0xFF121212),

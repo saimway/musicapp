@@ -7,17 +7,12 @@ import 'package:flutter_overlay_window/flutter_overlay_window.dart';
 import 'dart:developer';
 import '../services/audio_handler.dart';
 
-// Since WindowSize is not available, we use a constant for width
-// or standard logic. Using -1 usually implies MATCH_PARENT in many plugins.
-// However, to be safe, we will use default overlay behavior or a large integer
-// if the plugin supports it, or rely on 'OverlayFlag.defaultFlag' which usually handles it.
-
 class MusicController extends GetxController {
   final OnAudioQuery _audioQuery = OnAudioQuery();
-  late MyAudioHandler _audioHandler;
+  MyAudioHandler? _audioHandler; // Made nullable for safety
 
   var songs = <SongModel>[].obs;
-  var filteredSongs = <SongModel>[].obs; // For the organizer
+  var filteredSongs = <SongModel>[].obs;
 
   var isPlaying = false.obs;
   var currentSongIndex = (-1).obs;
@@ -26,7 +21,8 @@ class MusicController extends GetxController {
   var duration = Duration.zero.obs;
   var position = Duration.zero.obs;
 
-  var filterType = "All Songs".obs; // Organizer State
+  var filterType = "All Songs".obs;
+  var isServiceReady = false.obs; // Track initialization
 
   @override
   void onInit() {
@@ -36,42 +32,50 @@ class MusicController extends GetxController {
   }
 
   Future<void> _initAudioService() async {
-    _audioHandler = await AudioService.init(
-      builder: () => MyAudioHandler(),
-      config: const AudioServiceConfig(
-        androidNotificationChannelId: 'com.example.island_vibes.channel.audio',
-        androidNotificationChannelName: 'Island Vibes Music',
-        androidNotificationOngoing: true,
-      ),
-    );
+    try {
+      log("Initializing Audio Service...");
+      _audioHandler = await AudioService.init(
+        builder: () => MyAudioHandler(),
+        config: const AudioServiceConfig(
+          androidNotificationChannelId: 'com.example.island_vibes.channel.audio',
+          androidNotificationChannelName: 'Island Vibes Music',
+          androidNotificationOngoing: true,
+        ),
+      );
+      isServiceReady.value = true;
+      log("Audio Service Initialized.");
 
-    // Listen to playback state
-    _audioHandler.playbackState.listen((state) {
-      isPlaying.value = state.playing;
-      updateOverlay();
-    });
-
-    // Listen to media item changes
-    _audioHandler.mediaItem.listen((item) {
-      if (item != null) {
-        currentSongTitle.value = item.title;
-        currentArtist.value = item.artist ?? "Unknown";
+      _audioHandler!.playbackState.listen((state) {
+        isPlaying.value = state.playing;
         updateOverlay();
-      }
-    });
+      });
 
-    // Listen to position updates (simplistic)
-    AudioService.position.listen((p) {
-      position.value = p;
-    });
+      _audioHandler!.mediaItem.listen((item) {
+        if (item != null) {
+          currentSongTitle.value = item.title;
+          currentArtist.value = item.artist ?? "Unknown";
+          updateOverlay();
+        }
+      });
+
+      AudioService.position.listen((p) {
+        position.value = p;
+      });
+    } catch (e) {
+      log("Failed to init audio service: $e");
+    }
   }
 
   Future<void> checkPermissions() async {
+    log("Checking permissions...");
     var storageStatus = await Permission.storage.request();
     var audioStatus = await Permission.audio.request();
 
     if (storageStatus.isGranted || audioStatus.isGranted) {
+      log("Storage permission granted.");
       fetchSongs();
+    } else {
+      log("Storage permission denied.");
     }
 
     bool status = await FlutterOverlayWindow.isPermissionGranted();
@@ -82,6 +86,7 @@ class MusicController extends GetxController {
 
   Future<void> fetchSongs() async {
     try {
+      log("Fetching songs...");
       List<SongModel> fetchedSongs = await _audioQuery.querySongs(
         sortType: SongSortType.DATE_ADDED,
         orderType: OrderType.DESC_OR_GREATER,
@@ -91,7 +96,8 @@ class MusicController extends GetxController {
 
       var validSongs = fetchedSongs.where((song) => song.duration != null && song.duration! > 10000).toList();
       songs.value = validSongs;
-      filterSongs("All Songs"); // Initial filter
+      filterSongs("All Songs");
+      log("Fetched ${songs.length} songs.");
 
     } catch (e) {
       log("Error fetching songs: $e");
@@ -103,7 +109,6 @@ class MusicController extends GetxController {
     if (type == "All Songs") {
       filteredSongs.value = songs;
     } else if (type == "Artists") {
-      // Logic to show unique artists - for simplicity in this UI, we just sort by artist
       filteredSongs.value = List.from(songs)..sort((a, b) => (a.artist ?? "").compareTo(b.artist ?? ""));
     } else if (type == "Albums") {
        filteredSongs.value = List.from(songs)..sort((a, b) => (a.album ?? "").compareTo(b.album ?? ""));
@@ -113,11 +118,17 @@ class MusicController extends GetxController {
   }
 
   Future<void> playSong(int index) async {
-    try {
-      currentSongIndex.value = index;
-      var song = filteredSongs[index]; // Use filtered list
+    if (!isServiceReady.value || _audioHandler == null) {
+      log("Audio Service not ready yet!");
+      Get.snackbar("Wait", "Audio Service is initializing...");
+      return;
+    }
 
-      // Create MediaItems for the playlist
+    try {
+      log("Playing song at index $index");
+      currentSongIndex.value = index;
+      var song = filteredSongs[index];
+
       List<MediaItem> mediaItems = filteredSongs.map((s) => MediaItem(
         id: s.uri!,
         album: s.album,
@@ -126,8 +137,8 @@ class MusicController extends GetxController {
         duration: Duration(milliseconds: s.duration ?? 0),
       )).toList();
 
-      await _audioHandler.setPlaylist(mediaItems, index);
-      await _audioHandler.play();
+      await _audioHandler!.setPlaylist(mediaItems, index);
+      await _audioHandler!.play();
 
       showOverlay();
     } catch (e) {
@@ -136,18 +147,19 @@ class MusicController extends GetxController {
   }
 
   Future<void> togglePlay() async {
+    if (_audioHandler == null) return;
     if (isPlaying.value) {
-      await _audioHandler.pause();
+      await _audioHandler!.pause();
     } else {
-      await _audioHandler.play();
+      await _audioHandler!.play();
     }
   }
 
-  Future<void> playNext() async => _audioHandler.skipToNext();
-  Future<void> playPrevious() async => _audioHandler.skipToPrevious();
+  Future<void> playNext() async => _audioHandler?.skipToNext();
+  Future<void> playPrevious() async => _audioHandler?.skipToPrevious();
 
   void seek(Duration pos) {
-    _audioHandler.seek(pos);
+    _audioHandler?.seek(pos);
   }
 
   // --- Overlay Logic ---
@@ -155,18 +167,15 @@ class MusicController extends GetxController {
   Future<void> showOverlay() async {
     if (await FlutterOverlayWindow.isActive()) return;
 
-    // Removing WindowSize.matchParent as it was causing issues.
-    // width: -1 is often standard for MATCH_PARENT in android plugins
-    // or we can omit it to let the flag handle it.
     await FlutterOverlayWindow.showOverlay(
       enableDrag: true,
       overlayTitle: "Dynamic Island",
       overlayContent: 'Island Vibes Playing',
-      flag: OverlayFlag.defaultFlag, // defaultFlag usually makes it non-focusable but visible
+      flag: OverlayFlag.defaultFlag,
       visibility: NotificationVisibility.visibilitySecret,
-      // positionGravity: PositionGravity.top, // Removed as it causes build error
+      // positionGravity removed
       height: 140,
-      width: -1, // -1 is commonly MATCH_PARENT in JNI/Android channels
+      width: -1,
       startPosition: const OverlayPosition(0, 0),
     );
 
