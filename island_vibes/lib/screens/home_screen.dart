@@ -105,6 +105,7 @@ class HomeScreen extends StatelessWidget {
                       ),
                       onTap: () {
                         print("Tapped song at index: $index");
+                        Get.snackbar("Debug", "Tapped ${song.title}", duration: const Duration(milliseconds: 500));
                         controller.playSong(index);
                         Get.to(() => const PlayerScreen(), transition: Transition.downToUp);
                       },

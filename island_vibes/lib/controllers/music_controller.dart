@@ -9,7 +9,7 @@ import '../services/audio_handler.dart';
 
 class MusicController extends GetxController {
   final OnAudioQuery _audioQuery = OnAudioQuery();
-  MyAudioHandler? _audioHandler; // Made nullable for safety
+  MyAudioHandler? _audioHandler;
 
   var songs = <SongModel>[].obs;
   var filteredSongs = <SongModel>[].obs;
@@ -22,7 +22,7 @@ class MusicController extends GetxController {
   var position = Duration.zero.obs;
 
   var filterType = "All Songs".obs;
-  var isServiceReady = false.obs; // Track initialization
+  var isServiceReady = false.obs;
 
   @override
   void onInit() {
@@ -63,6 +63,7 @@ class MusicController extends GetxController {
       });
     } catch (e) {
       log("Failed to init audio service: $e");
+      Get.snackbar("Error", "Failed to init audio: $e");
     }
   }
 
@@ -71,11 +72,17 @@ class MusicController extends GetxController {
     var storageStatus = await Permission.storage.request();
     var audioStatus = await Permission.audio.request();
 
+    // Explicitly check MANAGE_EXTERNAL_STORAGE for Android 11+ if needed,
+    // but usually audio/storage is enough for media.
+
     if (storageStatus.isGranted || audioStatus.isGranted) {
       log("Storage permission granted.");
       fetchSongs();
     } else {
       log("Storage permission denied.");
+      Get.snackbar("Permission", "Storage permission required to play music.");
+      // Fallback: Try to fetch anyway in case permission logic is quirky on some devices
+      fetchSongs();
     }
 
     bool status = await FlutterOverlayWindow.isPermissionGranted();
@@ -86,7 +93,6 @@ class MusicController extends GetxController {
 
   Future<void> fetchSongs() async {
     try {
-      log("Fetching songs...");
       List<SongModel> fetchedSongs = await _audioQuery.querySongs(
         sortType: SongSortType.DATE_ADDED,
         orderType: OrderType.DESC_OR_GREATER,
@@ -97,10 +103,10 @@ class MusicController extends GetxController {
       var validSongs = fetchedSongs.where((song) => song.duration != null && song.duration! > 10000).toList();
       songs.value = validSongs;
       filterSongs("All Songs");
-      log("Fetched ${songs.length} songs.");
 
     } catch (e) {
       log("Error fetching songs: $e");
+      Get.snackbar("Error", "Failed to fetch songs: $e");
     }
   }
 
@@ -118,16 +124,20 @@ class MusicController extends GetxController {
   }
 
   Future<void> playSong(int index) async {
-    if (!isServiceReady.value || _audioHandler == null) {
-      log("Audio Service not ready yet!");
-      Get.snackbar("Wait", "Audio Service is initializing...");
+    // VISUAL FEEDBACK
+    Get.snackbar("Debug", "Trying to play song $index...", duration: const Duration(seconds: 1));
+
+    if (_audioHandler == null) {
+      Get.snackbar("Error", "Audio Service is not ready yet. Please wait.");
       return;
     }
 
     try {
-      log("Playing song at index $index");
       currentSongIndex.value = index;
       var song = filteredSongs[index];
+
+      // Debug URI
+      print("Playing URI: ${song.uri}");
 
       List<MediaItem> mediaItems = filteredSongs.map((s) => MediaItem(
         id: s.uri!,
@@ -143,15 +153,20 @@ class MusicController extends GetxController {
       showOverlay();
     } catch (e) {
       log("Error playing song: $e");
+      Get.snackbar("Error", "Could not play song: $e", duration: const Duration(seconds: 5));
     }
   }
 
   Future<void> togglePlay() async {
     if (_audioHandler == null) return;
-    if (isPlaying.value) {
-      await _audioHandler!.pause();
-    } else {
-      await _audioHandler!.play();
+    try {
+      if (isPlaying.value) {
+        await _audioHandler!.pause();
+      } else {
+        await _audioHandler!.play();
+      }
+    } catch (e) {
+      Get.snackbar("Error", "Playback error: $e");
     }
   }
 
@@ -165,28 +180,35 @@ class MusicController extends GetxController {
   // --- Overlay Logic ---
 
   Future<void> showOverlay() async {
-    if (await FlutterOverlayWindow.isActive()) return;
+    try {
+      if (await FlutterOverlayWindow.isActive()) return;
 
-    await FlutterOverlayWindow.showOverlay(
-      enableDrag: true,
-      overlayTitle: "Dynamic Island",
-      overlayContent: 'Island Vibes Playing',
-      flag: OverlayFlag.defaultFlag,
-      visibility: NotificationVisibility.visibilitySecret,
-      // positionGravity removed
-      height: 140,
-      width: -1,
-      startPosition: const OverlayPosition(0, 0),
-    );
-
-    updateOverlay();
+      await FlutterOverlayWindow.showOverlay(
+        enableDrag: true,
+        overlayTitle: "Dynamic Island",
+        overlayContent: 'Island Vibes Playing',
+        flag: OverlayFlag.defaultFlag,
+        visibility: NotificationVisibility.visibilitySecret,
+        height: 140,
+        width: -1,
+        startPosition: const OverlayPosition(0, 0),
+      );
+      updateOverlay();
+    } catch (e) {
+      print("Overlay error: $e");
+      // Don't snackbar here, it might be annoying
+    }
   }
 
   void updateOverlay() {
-    FlutterOverlayWindow.shareData({
-      'title': currentSongTitle.value,
-      'artist': currentArtist.value,
-      'isPlaying': isPlaying.value,
-    });
+    try {
+      FlutterOverlayWindow.shareData({
+        'title': currentSongTitle.value,
+        'artist': currentArtist.value,
+        'isPlaying': isPlaying.value,
+      });
+    } catch (e) {
+      print("Overlay update error: $e");
+    }
   }
 }
